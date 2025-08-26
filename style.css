@@ -1,0 +1,148 @@
+:root {
+    --bg-color: #0d0221;
+    --card-bg-color: rgba(10, 10, 25, 0.7);
+    --text-color: #c0c0ff;
+    --heading-font: 'Orbitron', sans-serif;
+    --body-font: 'Roboto Mono', monospace;
+    --neon-cyan: #00f6ff;
+    --neon-magenta: #ff00f7;
+    --glow-cyan: rgba(0, 246, 255, 0.7);
+    --glow-magenta: rgba(255, 0, 247, 0.7);
+    --border-color: rgba(0, 246, 255, 0.3);
+    --disabled-color: #555;
+}
+
+@keyframes pulse {
+    0% { box-shadow: 0 0 10px var(--glow-magenta), inset 0 0 5px var(--glow-magenta); }
+    50% { box-shadow: 0 0 25px var(--glow-magenta), inset 0 0 10px var(--glow-magenta); }
+    100% { box-shadow: 0 0 10px var(--glow-magenta), inset 0 0 5px var(--glow-magenta); }
+}
+
+body {
+    margin: 0;
+    font-family: var(--body-font);
+    background-color: var(--bg-color);
+    background-image: radial-gradient(circle at 100% 0%, rgba(0, 246, 255, 0.1), transparent 30%),
+                      radial-gradient(circle at 0% 100%, rgba(255, 0, 247, 0.1), transparent 30%);
+    color: var(--text-color);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 1rem;
+    box-sizing: border-box;
+}
+.hidden { display: none !important; }
+
+.card {
+    background-color: var(--card-bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 2.5rem;
+    box-shadow: 0 0 15px var(--glow-cyan), inset 0 0 10px rgba(0,0,0,0.5);
+    backdrop-filter: blur(10px);
+    width: 90%;
+    max-width: 700px;
+}
+
+h1 {
+    font-family: var(--heading-font);
+    color: var(--neon-cyan);
+    text-align: center;
+    margin: 0;
+    font-size: 2.5rem;
+    letter-spacing: 2px;
+    text-shadow: 0 0 5px var(--glow-cyan);
+}
+
+.subtitle {
+    text-align: center;
+    margin: 0.5rem 0 2rem 0;
+    font-size: 0.9rem;
+    color: var(--neon-magenta);
+    text-shadow: 0 0 5px var(--glow-magenta);
+    letter-spacing: 1px;
+}
+
+.status-area {
+    text-align: center;
+    margin-bottom: 2rem;
+    font-size: 0.9rem;
+    padding: 0.5rem;
+    background-color: rgba(0,0,0,0.3);
+    border: 1px dashed var(--border-color);
+    min-height: 20px;
+}
+
+.main-controls { display: flex; justify-content: center; margin-bottom: 1.5rem; }
+
+.mic-button {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: 2px solid var(--neon-cyan);
+    background-color: transparent;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.2s ease;
+    box-shadow: 0 0 10px var(--glow-cyan), inset 0 0 5px var(--glow-cyan);
+}
+.mic-button:hover:not(:disabled) {
+    background-color: var(--glow-cyan);
+    box-shadow: 0 0 20px var(--glow-cyan), inset 0 0 10px var(--glow-cyan);
+}
+.mic-button:disabled {
+    border-color: var(--disabled-color);
+    box-shadow: none;
+    cursor: not-allowed;
+}
+.mic-button:disabled .mic-icon { fill: var(--disabled-color); }
+.mic-icon { width: 30px; height: 30px; fill: var(--neon-cyan); transition: fill 0.2s ease; }
+
+.mic-button.recording {
+    border-color: var(--neon-magenta);
+    animation: pulse 1.5s infinite;
+}
+.mic-button.recording .mic-icon { fill: var(--neon-magenta); }
+
+.transcription-box { width: 100%; margin-bottom: 1.5rem; }
+#output-text {
+    width: 100%;
+    height: 200px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    padding: 1rem;
+    font-size: 1rem;
+    line-height: 1.6;
+    background-color: rgba(0,0,0,0.5);
+    color: var(--text-color);
+    box-sizing: border-box;
+    resize: vertical;
+    font-family: var(--body-font);
+}
+#output-text::placeholder { color: var(--disabled-color); }
+
+.secondary-controls { display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap; }
+.action-button {
+    background-color: transparent;
+    color: var(--neon-cyan);
+    border: 1px solid var(--neon-cyan);
+    padding: 0.6rem 1.2rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s, color 0.2s;
+    font-family: var(--body-font);
+}
+.action-button:hover:not(.disabled) {
+    background-color: var(--neon-cyan);
+    color: var(--bg-color);
+}
+.action-button.disabled {
+    border-color: var(--disabled-color);
+    color: var(--disabled-color);
+    cursor: not-allowed;
+}
