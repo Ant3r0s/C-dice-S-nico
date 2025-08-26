@@ -16,11 +16,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let transcriber = null, summarizer = null, mediaRecorder = null;
     let isRecording = false;
     const SUMMARIZE_THRESHOLD = 1500;
-    
-    // **CAMBIO CLAVE:** Declaramos el AudioContext aquí, pero lo activaremos después.
     let audioContext;
+    let audioChunks = []; // **NUEVO:** Array para guardar los fragmentos de audio
 
-    // **NUEVO:** Función para inicializar o reanudar el AudioContext de forma segura.
     async function ensureAudioContext() {
         if (!audioContext) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -62,30 +60,38 @@ document.addEventListener('DOMContentLoaded', () => {
     recordBtn.addEventListener('click', () => isRecording ? stopRecording() : startRecording());
     
     async function startRecording() {
-        // **CAMBIO CLAVE:** Nos aseguramos de que el motor de audio está activo ANTES de grabar.
         await ensureAudioContext();
         
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioChunks = []; // Limpiar el array al empezar
             mediaRecorder = new MediaRecorder(stream);
-            mediaRecorder.addEventListener('dataavailable', async (event) => {
-                try {
-                    statusText.textContent = 'PROCESSING AUDIO CHUNK...';
-                    if (event.data.size === 0) return;
-                    const arrayBuffer = await event.data.arrayBuffer();
-                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-                    const result = await transcribeAudio(audioBuffer);
-                    if (result && result.trim().length > 0) {
-                        outputText.value += result.trim() + ' ';
-                    }
-                    statusText.textContent = 'STATUS: ACTIVE LISTENING...';
-                } catch (error) {
-                    console.error('Error processing audio chunk:', error);
-                    statusText.textContent = 'ERROR: Could not process audio chunk.';
-                    outputText.value += '// CHUNK_ERROR // ';
+            
+            // **CAMBIO DE ESTRATEGIA:** Solo guardamos los fragmentos, no los procesamos aún.
+            mediaRecorder.addEventListener('dataavailable', (event) => {
+                if (event.data.size > 0) {
+                    audioChunks.push(event.data);
                 }
             });
-            mediaRecorder.start(5000);
+
+            // Al detener, sí procesamos el audio completo.
+            mediaRecorder.addEventListener('stop', async () => {
+                statusText.textContent = 'Recording complete. Processing full audio...';
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+
+                try {
+                    const arrayBuffer = await audioBlob.arrayBuffer();
+                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    const result = await transcribeAudio(audioBuffer);
+                    outputText.value = result; // Reemplazamos el contenido, no añadimos
+                    processAndSaveTranscription(result);
+                } catch (error) {
+                    console.error('Error processing final audio blob:', error);
+                    statusText.textContent = 'ERROR: Could not process recorded audio.';
+                }
+            });
+
+            mediaRecorder.start(1000); // Guardar fragmentos cada segundo
             isRecording = true;
             recordBtn.classList.add('recording');
             statusText.textContent = 'STATUS: ACTIVE LISTENING...';
@@ -97,7 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function stopRecording() {
-        if (mediaRecorder) {
+        if (mediaRecorder && mediaRecorder.state === "recording") {
             mediaRecorder.stop();
             mediaRecorder.stream.getTracks().forEach(track => track.stop());
         }
@@ -105,13 +111,10 @@ document.addEventListener('DOMContentLoaded', () => {
         recordBtn.classList.remove('recording');
         statusText.textContent = 'STATUS: STANDBY.';
         uploadLabel.classList.remove('disabled');
-        processAndSaveTranscription(outputText.value);
     }
 
     audioUpload.addEventListener('change', async (event) => {
-        // **CAMBIO CLAVE:** También aseguramos el motor de audio aquí.
         await ensureAudioContext();
-        
         const file = event.target.files[0];
         if (!file || isRecording) return;
         recordBtn.disabled = true;
@@ -136,7 +139,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!transcriber) return 'ERROR: AI CORE NOT LOADED.';
         try {
             const audioData = audioBuffer.getChannelData(0);
-            const output = await transcriber(audioData, { chunk_length_s: 30, stride_length_s: 5 });
+            const output = await transcriber(audioData, { 
+                chunk_length_s: 30, 
+                stride_length_s: 5 
+            });
             return output.text;
         } catch (error) { 
             console.error('Transcription error:', error); 
@@ -145,7 +151,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Lógica de Procesado, Resumen y Guardado ---
-    // (Esta sección no tiene cambios)
     async function processAndSaveTranscription(text) {
         if (!text || text.trim().length < 20) return;
         let summaryText = null;
@@ -167,7 +172,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Lógica del Historial ---
-    // (Esta sección no tiene cambios)
     function saveToHistory(transcription, summary) {
         const history = JSON.parse(localStorage.getItem('codiceSonicoHistory')) || [];
         const newEntry = {
@@ -223,11 +227,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Lógica de la Ventana Modal y Utilidades ---
     historyBtn.addEventListener('click', () => historyModal.classList.remove('hidden'));
     closeModalBtn.addEventListener('click', () => historyModal.classList.add('hidden'));
-    window.addEventListener('click', (event) => { 
-        if (event.target === historyModal) { 
-            historyModal.classList.add('hidden'); 
-        } 
-    });
+    window.addEventListener('click', (event) => { if (event.target === historyModal) { historyModal.classList.add('hidden'); } });
     copyBtn.addEventListener('click', () => {
         outputText.select();
         document.execCommand('copy');
