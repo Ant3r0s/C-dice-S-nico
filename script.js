@@ -16,12 +16,34 @@ document.addEventListener('DOMContentLoaded', () => {
     let transcriber = null, summarizer = null, mediaRecorder = null;
     let isRecording = false;
     const SUMMARIZE_THRESHOLD = 1500;
-    // NUEVO: Contexto de Audio para decodificación manual
+    // Contexto de Audio para decodificación manual y robusta
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
     // --- Carga de Modelos y Lógica Principal ---
-    async function loadModels() { /* ... (sin cambios) ... */ }
-    async function loadSummarizer() { /* ... (sin cambios) ... */ }
+    async function loadModels() {
+        statusText.textContent = `SYSTEM BOOT: Loading Transcriber Core...`;
+        transcriber = await window.pipeline('automatic-speech-recognition', 'Xenova/whisper-small', {
+            progress_callback: data => {
+                if(data.status !== 'progress') return;
+                statusText.textContent = `LOADING TRANSCRIBER CORE... ${data.progress.toFixed(1)}%`;
+            }
+        });
+        statusText.textContent = 'SYSTEM READY.';
+        recordBtn.disabled = false;
+        uploadLabel.classList.remove('disabled');
+    }
+
+    async function loadSummarizer() {
+        if (summarizer) return; // Si ya está cargado, no hacer nada
+        statusText.textContent = `LOADING SUMMARIZER CORE...`;
+        summarizer = await window.pipeline('summarization', 'Xenova/distilbart-cnn-6-6', {
+            progress_callback: data => {
+                if(data.status !== 'progress') return;
+                statusText.textContent = `LOADING SUMMARIZER CORE... ${data.progress.toFixed(1)}%`;
+            }
+        });
+    }
+
     loadModels();
     loadHistory();
 
@@ -34,32 +56,47 @@ document.addEventListener('DOMContentLoaded', () => {
             mediaRecorder = new MediaRecorder(stream);
             mediaRecorder.addEventListener('dataavailable', async (event) => {
                 statusText.textContent = 'PROCESSING AUDIO CHUNK...';
-                // **CAMBIO CLAVE: Decodificación manual de audio para máxima compatibilidad**
+                // Decodificación manual de audio para máxima compatibilidad
                 const arrayBuffer = await event.data.arrayBuffer();
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
                 const result = await transcribeAudio(audioBuffer);
                 outputText.value += result + ' ';
                 statusText.textContent = 'STATUS: ACTIVE LISTENING...';
             });
-            mediaRecorder.start(5000);
+            mediaRecorder.start(5000); // Procesa audio cada 5 segundos
             isRecording = true;
             recordBtn.classList.add('recording');
             statusText.textContent = 'STATUS: ACTIVE LISTENING...';
             uploadLabel.classList.add('disabled');
-        } catch (error) { console.error('Mic access error:', error); statusText.textContent = 'ERROR: MIC ACCESS DENIED.'; }
+        } catch (error) { 
+            console.error('Mic access error:', error); 
+            statusText.textContent = 'ERROR: MIC ACCESS DENIED.'; 
+        }
     }
     
-    function stopRecording() { /* ... (sin cambios, ver código completo abajo) ... */ }
+    function stopRecording() {
+        if (mediaRecorder) {
+            mediaRecorder.stop();
+            mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        }
+        isRecording = false;
+        recordBtn.classList.remove('recording');
+        statusText.textContent = 'STATUS: STANDBY.';
+        uploadLabel.classList.remove('disabled');
+        processAndSaveTranscription(outputText.value);
+    }
 
     audioUpload.addEventListener('change', async (event) => {
         const file = event.target.files[0];
         if (!file || isRecording) return;
         recordBtn.disabled = true;
         statusText.textContent = `TRANSCRIBING FILE: "${file.name}"...`;
-        // **CAMBIO CLAVE: También decodificamos el archivo manualmente**
+        
+        // Decodificamos el archivo manualmente para robustez
         const arrayBuffer = await file.arrayBuffer();
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
         const result = await transcribeAudio(audioBuffer);
+
         outputText.value = result;
         statusText.textContent = `FILE TRANSCRIPTION COMPLETE: "${file.name}"`;
         recordBtn.disabled = false;
@@ -67,30 +104,67 @@ document.addEventListener('DOMContentLoaded', () => {
         processAndSaveTranscription(result);
     });
 
-    // **CAMBIO CLAVE: La función ahora espera un AudioBuffer, no una URL**
+    // La función ahora espera un AudioBuffer decodificado, no una URL
     async function transcribeAudio(audioBuffer) {
         if (!transcriber) return 'ERROR: AI CORE NOT LOADED.';
         try {
             // Extraemos el canal de audio y lo preparamos para el modelo
             const audioData = audioBuffer.getChannelData(0);
-            const output = await transcriber(audioData, { chunk_length_s: 30, stride_length_s: 5 });
+            const output = await transcriber(audioData, { 
+                chunk_length_s: 30, 
+                stride_length_s: 5 
+            });
             return output.text;
-        } catch (error) { console.error('Transcription error:', error); return `// TRANSCRIPTION ERROR: ${error.message} //`; }
+        } catch (error) { 
+            console.error('Transcription error:', error); 
+            return `// TRANSCRIPTION ERROR: ${error.message} //`; 
+        }
     }
 
-    // --- Lógica de Procesado, Resumen y Guardado (sin cambios) ---
-    async function processAndSaveTranscription(text) { /* ... (sin cambios, ver código completo abajo) ... */ }
+    // --- Lógica de Procesado, Resumen y Guardado ---
+    async function processAndSaveTranscription(text) {
+        if (!text || text.trim().length < 20) return; // No guardar transcripciones muy cortas
+        let summaryText = null;
+        if (text.length > SUMMARIZE_THRESHOLD) {
+            statusText.textContent = `Transcription long. Generating summary...`;
+            await loadSummarizer();
+            try {
+                const summary = await summarizer(text, { max_length: 150, min_length: 30 });
+                summaryText = summary[0].summary_text;
+                statusText.textContent = 'Transcription and summary saved to history.';
+            } catch (error) {
+                console.error('Summarization error:', error);
+                statusText.textContent = 'Transcription saved. Summary failed.';
+            }
+        } else {
+            statusText.textContent = 'Transcription saved to history.';
+        }
+        saveToHistory(text, summaryText);
+    }
 
     // --- Lógica del Historial (con función de borrado) ---
-    function saveToHistory(transcription, summary) { /* ... (sin cambios) ... */ }
-    function loadHistory() { renderHistory(); }
+    function saveToHistory(transcription, summary) {
+        const history = JSON.parse(localStorage.getItem('codiceSonicoHistory')) || [];
+        const newEntry = {
+            id: Date.now(),
+            date: new Date().toLocaleString('es-ES'),
+            transcription: transcription,
+            summary: summary,
+        };
+        history.unshift(newEntry);
+        localStorage.setItem('codiceSonicoHistory', JSON.stringify(history));
+        renderHistory();
+    }
+
+    function loadHistory() {
+        renderHistory();
+    }
     
-    // **NUEVO: Función para borrar una entrada del historial**
     function deleteFromHistory(id) {
         let history = JSON.parse(localStorage.getItem('codiceSonicoHistory')) || [];
         history = history.filter(entry => entry.id !== id);
         localStorage.setItem('codiceSonicoHistory', JSON.stringify(history));
-        renderHistory(); // Volver a pintar el historial
+        renderHistory();
     }
 
     function renderHistory() {
@@ -103,7 +177,6 @@ document.addEventListener('DOMContentLoaded', () => {
         history.forEach(entry => {
             const item = document.createElement('div');
             item.className = 'history-item';
-            // **AÑADIDO: Botón de borrado con icono SVG de papelera**
             item.innerHTML = `
                 <div class="history-item-date">
                     ${entry.date}
@@ -114,12 +187,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     <svg viewBox="0 0 448 512"><path d="M135.2 17.7L128 32H32C14.3 32 0 46.3 0 64S14.3 96 32 96H416c17.7 0 32-14.3 32-32s-14.3-32-32-32H320l-7.2-14.3C307.4 6.8 296.3 0 284.2 0H163.8c-12.1 0-23.2 6.8-28.6 17.7zM416 128H32L53.2 467c1.6 25.3 22.6 45 47.9 45H346.9c25.3 0 46.3-19.7 47.9-45L416 128z"/></svg>
                 </button>
             `;
-            // Listener para cargar el texto al hacer clic en el item
             item.addEventListener('click', () => {
                 outputText.value = entry.summary ? `--- RESUMEN ---\n${entry.summary}\n\n--- TRANSCRIPCIÓN COMPLETA ---\n${entry.transcription}` : entry.transcription;
                 historyModal.classList.add('hidden');
             });
-            // **NUEVO: Listener para el botón de borrado**
+
             const deleteBtn = item.querySelector('.delete-btn');
             deleteBtn.addEventListener('click', (event) => {
                 event.stopPropagation(); // Evita que se dispare el clic del item padre
@@ -129,90 +201,24 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- Lógica de la Ventana Modal y Utilidades (sin cambios) ---
+    // --- Lógica de la Ventana Modal ---
     historyBtn.addEventListener('click', () => historyModal.classList.remove('hidden'));
     closeModalBtn.addEventListener('click', () => historyModal.classList.add('hidden'));
-    window.addEventListener('click', (event) => { if (event.target === historyModal) { historyModal.classList.add('hidden'); } });
-    copyBtn.addEventListener('click', () => { /* ... */ });
-    clearBtn.addEventListener('click', () => { /* ... */ });
-});
-
-// --- CÓDIGO COMPLETO DE FUNCIONES SIN CAMBIOS PARA EVITAR ERRORES ---
-// Pega esto dentro del script de arriba si lo necesitas, pero el bloque principal ya contiene todo.
-// Por claridad, aquí están las funciones completas que se mencionan como "sin cambios":
-/*
-async function loadModels() {
-    statusText.textContent = `SYSTEM BOOT: Loading Transcriber Core...`;
-    transcriber = await window.pipeline('automatic-speech-recognition', 'Xenova/whisper-small', {
-        progress_callback: data => {
-            if(data.status !== 'progress') return;
-            statusText.textContent = `LOADING TRANSCRIBER CORE... ${data.progress.toFixed(1)}%`;
-        }
+    window.addEventListener('click', (event) => { 
+        if (event.target === historyModal) { 
+            historyModal.classList.add('hidden'); 
+        } 
     });
-    statusText.textContent = 'SYSTEM READY.';
-    recordBtn.disabled = false;
-    uploadLabel.classList.remove('disabled');
-}
-async function loadSummarizer() {
-    if (summarizer) return;
-    statusText.textContent = `LOADING SUMMARIZER CORE...`;
-    summarizer = await window.pipeline('summarization', 'Xenova/distilbart-cnn-6-6', {
-        progress_callback: data => {
-            if(data.status !== 'progress') return;
-            statusText.textContent = `LOADING SUMMARIZER CORE... ${data.progress.toFixed(1)}%`;
-        }
-    });
-}
-function stopRecording() {
-    if (mediaRecorder) {
-        mediaRecorder.stop();
-        mediaRecorder.stream.getTracks().forEach(track => track.stop());
-    }
-    isRecording = false;
-    recordBtn.classList.remove('recording');
-    statusText.textContent = 'STATUS: STANDBY.';
-    uploadLabel.classList.remove('disabled');
-    processAndSaveTranscription(outputText.value);
-}
-async function processAndSaveTranscription(text) {
-    if (!text || text.trim().length < 20) return;
-    let summaryText = null;
-    if (text.length > SUMMARIZE_THRESHOLD) {
-        statusText.textContent = `Transcription long. Generating summary...`;
-        await loadSummarizer();
-        try {
-            const summary = await summarizer(text, { max_length: 150, min_length: 30 });
-            summaryText = summary[0].summary_text;
-            statusText.textContent = 'Transcription and summary saved to history.';
-        } catch (error) {
-            console.error('Summarization error:', error);
-            statusText.textContent = 'Transcription saved. Summary failed.';
-        }
-    } else {
-        statusText.textContent = 'Transcription saved to history.';
-    }
-    saveToHistory(text, summaryText);
-}
-function saveToHistory(transcription, summary) {
-    const history = JSON.parse(localStorage.getItem('codiceSonicoHistory')) || [];
-    const newEntry = {
-        id: Date.now(),
-        date: new Date().toLocaleString('es-ES'),
-        transcription: transcription,
-        summary: summary,
-    };
-    history.unshift(newEntry);
 
-    localStorage.setItem('codiceSonicoHistory', JSON.stringify(history));
-    renderHistory();
-}
-copyBtn.addEventListener('click', () => {
-    outputText.select();
-    document.execCommand('copy');
-    statusText.textContent = 'OUTPUT BUFFER COPIED TO CLIPBOARD.';
+    // --- Botones de Utilidad ---
+    copyBtn.addEventListener('click', () => {
+        outputText.select();
+        document.execCommand('copy');
+        statusText.textContent = 'OUTPUT BUFFER COPIED TO CLIPBOARD.';
+    });
+
+    clearBtn.addEventListener('click', () => {
+        outputText.value = '';
+        statusText.textContent = 'OUTPUT BUFFER CLEARED. STATUS: STANDBY.';
+    });
 });
-clearBtn.addEventListener('click', () => {
-    outputText.value = '';
-    statusText.textContent = 'OUTPUT BUFFER CLEARED. STATUS: STANDBY.';
-});
-*/
