@@ -16,7 +16,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let transcriber = null, summarizer = null, mediaRecorder = null;
     let isRecording = false;
     const SUMMARIZE_THRESHOLD = 1500;
-    // Contexto de Audio para decodificación manual y robusta
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
     // --- Carga de Modelos y Lógica Principal ---
@@ -34,7 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function loadSummarizer() {
-        if (summarizer) return; // Si ya está cargado, no hacer nada
+        if (summarizer) return;
         statusText.textContent = `LOADING SUMMARIZER CORE...`;
         summarizer = await window.pipeline('summarization', 'Xenova/distilbart-cnn-6-6', {
             progress_callback: data => {
@@ -54,16 +53,34 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             mediaRecorder = new MediaRecorder(stream);
+            
+            // **AQUÍ ESTÁ LA CORRECCIÓN CLAVE**
             mediaRecorder.addEventListener('dataavailable', async (event) => {
-                statusText.textContent = 'PROCESSING AUDIO CHUNK...';
-                // Decodificación manual de audio para máxima compatibilidad
-                const arrayBuffer = await event.data.arrayBuffer();
-                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-                const result = await transcribeAudio(audioBuffer);
-                outputText.value += result + ' ';
-                statusText.textContent = 'STATUS: ACTIVE LISTENING...';
+                // Envolvemos todo en un try...catch para capturar fallos silenciosos
+                try {
+                    statusText.textContent = 'PROCESSING AUDIO CHUNK...';
+                    if (event.data.size === 0) return; // Ignorar fragmentos vacíos
+
+                    const arrayBuffer = await event.data.arrayBuffer();
+                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    const result = await transcribeAudio(audioBuffer);
+
+                    // Añadir texto solo si la transcripción no está vacía
+                    if (result && result.trim().length > 0) {
+                        outputText.value += result.trim() + ' ';
+                    }
+                    
+                    statusText.textContent = 'STATUS: ACTIVE LISTENING...';
+
+                } catch (error) {
+                    console.error('Error processing audio chunk:', error);
+                    statusText.textContent = 'ERROR: Could not process audio chunk.';
+                    // Opcional: añadir un marcador de error en la transcripción
+                    outputText.value += '// CHUNK_ERROR // ';
+                }
             });
-            mediaRecorder.start(5000); // Procesa audio cada 5 segundos
+
+            mediaRecorder.start(5000);
             isRecording = true;
             recordBtn.classList.add('recording');
             statusText.textContent = 'STATUS: ACTIVE LISTENING...';
@@ -91,24 +108,25 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!file || isRecording) return;
         recordBtn.disabled = true;
         statusText.textContent = `TRANSCRIBING FILE: "${file.name}"...`;
-        
-        // Decodificamos el archivo manualmente para robustez
-        const arrayBuffer = await file.arrayBuffer();
-        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-        const result = await transcribeAudio(audioBuffer);
-
-        outputText.value = result;
-        statusText.textContent = `FILE TRANSCRIPTION COMPLETE: "${file.name}"`;
-        recordBtn.disabled = false;
-        audioUpload.value = '';
-        processAndSaveTranscription(result);
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            const result = await transcribeAudio(audioBuffer);
+            outputText.value = result;
+            statusText.textContent = `FILE TRANSCRIPTION COMPLETE: "${file.name}"`;
+            processAndSaveTranscription(result);
+        } catch (error) {
+            console.error('Error processing audio file:', error);
+            statusText.textContent = `ERROR: Could not process file "${file.name}"`;
+        } finally {
+            recordBtn.disabled = false;
+            audioUpload.value = '';
+        }
     });
 
-    // La función ahora espera un AudioBuffer decodificado, no una URL
     async function transcribeAudio(audioBuffer) {
         if (!transcriber) return 'ERROR: AI CORE NOT LOADED.';
         try {
-            // Extraemos el canal de audio y lo preparamos para el modelo
             const audioData = audioBuffer.getChannelData(0);
             const output = await transcriber(audioData, { 
                 chunk_length_s: 30, 
@@ -123,7 +141,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Lógica de Procesado, Resumen y Guardado ---
     async function processAndSaveTranscription(text) {
-        if (!text || text.trim().length < 20) return; // No guardar transcripciones muy cortas
+        if (!text || text.trim().length < 20) return;
         let summaryText = null;
         if (text.length > SUMMARIZE_THRESHOLD) {
             statusText.textContent = `Transcription long. Generating summary...`;
@@ -142,7 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
         saveToHistory(text, summaryText);
     }
 
-    // --- Lógica del Historial (con función de borrado) ---
+    // --- Lógica del Historial ---
     function saveToHistory(transcription, summary) {
         const history = JSON.parse(localStorage.getItem('codiceSonicoHistory')) || [];
         const newEntry = {
@@ -191,17 +209,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 outputText.value = entry.summary ? `--- RESUMEN ---\n${entry.summary}\n\n--- TRANSCRIPCIÓN COMPLETA ---\n${entry.transcription}` : entry.transcription;
                 historyModal.classList.add('hidden');
             });
-
             const deleteBtn = item.querySelector('.delete-btn');
             deleteBtn.addEventListener('click', (event) => {
-                event.stopPropagation(); // Evita que se dispare el clic del item padre
+                event.stopPropagation();
                 deleteFromHistory(entry.id);
             });
             historyList.appendChild(item);
         });
     }
 
-    // --- Lógica de la Ventana Modal ---
+    // --- Lógica de la Ventana Modal y Utilidades ---
     historyBtn.addEventListener('click', () => historyModal.classList.remove('hidden'));
     closeModalBtn.addEventListener('click', () => historyModal.classList.add('hidden'));
     window.addEventListener('click', (event) => { 
@@ -209,14 +226,11 @@ document.addEventListener('DOMContentLoaded', () => {
             historyModal.classList.add('hidden'); 
         } 
     });
-
-    // --- Botones de Utilidad ---
     copyBtn.addEventListener('click', () => {
         outputText.select();
         document.execCommand('copy');
         statusText.textContent = 'OUTPUT BUFFER COPIED TO CLIPBOARD.';
     });
-
     clearBtn.addEventListener('click', () => {
         outputText.value = '';
         statusText.textContent = 'OUTPUT BUFFER CLEARED. STATUS: STANDBY.';
