@@ -15,10 +15,30 @@
 </head>
 <body>
     <main class="container">
-        <div class="card">
+        <div id="mode-selection-view" class="card">
             <header>
                 <h1>Códice Sónico</h1>
-                <p class="subtitle">// DECODIFICANDO FLUJOS DE AUDIO //</p>
+                <p class="subtitle">// SELECCIONA UN MODO DE OPERACIÓN //</p>
+            </header>
+            <div class="mode-container">
+                <button id="mode-fast-dictation" class="mode-button">
+                    <span class="mode-icon">🎙️</span>
+                    <span class="mode-title">Dictado Rápido</span>
+                    <span class="mode-desc">Para notas cortas. Rápido y en tiempo real. (Requiere Internet)</span>
+                </button>
+                <button id="mode-deep-transcription" class="mode-button">
+                    <span class="mode-icon">🧠</span>
+                    <span class="mode-title">Transcripción Profunda (IA)</span>
+                    <span class="mode-desc">Para audios largos y archivos. 100% privado y offline.</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="transcription-view" class="card hidden">
+             <button id="back-to-modes" class="back-button" title="Volver a selección de modo">&larr; Volver</button>
+            <header>
+                <h1 id="transcription-title">Códice Sónico</h1>
+                <p id="transcription-subtitle" class="subtitle"></p>
             </header>
             
             <div id="status-area" class="status-area">
@@ -49,9 +69,7 @@
         <div class="modal-content">
             <span class="close-button">&times;</span>
             <h2>Historial de Transcripciones</h2>
-            <div id="history-list">
-                <p>No hay transcripciones guardadas.</p>
-            </div>
+            <div id="history-list"></div>
         </div>
     </div>
 
