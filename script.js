@@ -16,11 +16,35 @@ document.addEventListener('DOMContentLoaded', () => {
     let transcriber = null, summarizer = null;
     let isRecording = false;
     const SUMMARIZE_THRESHOLD = 1500;
+    const TARGET_SAMPLE_RATE = 16000; // La frecuencia que necesita Whisper
     
-    // --- ARQUITECTURA DE AUDIO PROFESIONAL ---
     let audioContext;
     let workletNode;
     let microphoneStream;
+
+    // --- NUEVA FUNCIÓN: El "Traductor Universal" de Audio ---
+    function resampleBuffer(inputBuffer, inputSampleRate) {
+        if (inputSampleRate === TARGET_SAMPLE_RATE) {
+            return inputBuffer; // Si ya está en el formato correcto, no hacemos nada
+        }
+        const ratio = TARGET_SAMPLE_RATE / inputSampleRate;
+        const outputLength = Math.round(inputBuffer.length * ratio);
+        const outputBuffer = new Float32Array(outputLength);
+        
+        for (let i = 0; i < outputLength; i++) {
+            const theoreticalIndex = i / ratio;
+            const index1 = Math.floor(theoreticalIndex);
+            const index2 = Math.ceil(theoreticalIndex);
+            const t = theoreticalIndex - index1;
+
+            if (index2 < inputBuffer.length) {
+                outputBuffer[i] = (1 - t) * inputBuffer[index1] + t * inputBuffer[index2];
+            } else {
+                outputBuffer[i] = inputBuffer[index1];
+            }
+        }
+        return outputBuffer;
+    }
 
     async function setupAudioWorklet() {
         if (!audioContext) {
@@ -34,15 +58,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 await audioContext.audioWorklet.addModule('audio-recorder-worklet.js');
                 workletNode = new AudioWorkletNode(audioContext, 'audio-recorder-processor');
                 
-                // El worklet nos enviará el audio grabado cuando se lo pidamos
                 workletNode.port.onmessage = async (event) => {
                     statusText.textContent = 'Recording complete. Processing full audio...';
-                    const audioData = event.data.buffer;
+                    let audioData = event.data.buffer;
                     if (audioData.length === 0) {
                         statusText.textContent = 'Recording was empty. Nothing to process.';
                         return;
                     }
-                    const result = await transcribeAudio(audioData);
+
+                    // **CAMBIO CLAVE:** Remuestreamos el audio grabado si es necesario
+                    const resampledAudio = resampleBuffer(audioData, audioContext.sampleRate);
+
+                    const result = await transcribeAudio(resampledAudio);
                     outputText.value = result;
                     processAndSaveTranscription(result);
                 };
@@ -54,7 +81,173 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- Carga de Modelos y Lógica Principal ---
+    async function loadModels() { /* ... (sin cambios) ... */ }
+    async function loadSummarizer() { /* ... (sin cambios) ... */ }
+    loadModels();
+    loadHistory();
+
+    // --- Lógica de Transcripción ---
+    recordBtn.addEventListener('click', () => isRecording ? stopRecording() : startRecording());
+    
+    async function startRecording() {
+        await setupAudioWorklet();
+        try {
+            // No forzamos sampleRate aquí, dejamos que el navegador elija el mejor
+            microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const source = audioContext.createMediaStreamSource(microphoneStream);
+            source.connect(workletNode);
+            workletNode.port.postMessage({ command: 'start' });
+            isRecording = true;
+            recordBtn.classList.add('recording');
+            statusText.textContent = 'STATUS: ACTIVE LISTENING...';
+            uploadLabel.classList.add('disabled');
+        } catch (error) { 
+            console.error('Mic access error:', error); 
+            statusText.textContent = 'ERROR: MIC ACCESS DENIED.'; 
+        }
+    }
+    
+    function stopRecording() { /* ... (sin cambios) ... */ }
+
+    audioUpload.addEventListener('change', async (event) => {
+        await setupAudioWorklet();
+        const file = event.target.files[0];
+        if (!file || isRecording) return;
+        recordBtn.disabled = true;
+        statusText.textContent = `TRANSCRIBING FILE: "${file.name}"...`;
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            
+            // **CAMBIO CLAVE:** Remuestreamos también el audio del archivo
+            const audioData = audioBuffer.getChannelData(0);
+            const resampledAudio = resampleBuffer(audioData, audioBuffer.sampleRate);
+            
+            const result = await transcribeAudio(resampledAudio);
+            outputText.value = result;
+            statusText.textContent = `FILE TRANSCRIPTION COMPLETE: "${file.name}"`;
+            processAndSaveTranscription(result);
+        } catch (error) {
+            console.error('Error processing audio file:', error);
+            statusText.textContent = `ERROR: Could not process file "${file.name}"`;
+        } finally {
+            recordBtn.disabled = false;
+            audioUpload.value = '';
+        }
+    });
+
+    async function transcribeAudio(audioData) {
+        if (!transcriber) return 'ERROR: AI CORE NOT LOADED.';
+        try {
+            // La IA ya recibe el audio en el formato perfecto de 16kHz
+            const output = await transcriber(audioData, { 
+                chunk_length_s: 30, 
+                stride_length_s: 5 
+            });
+            return output.text;
+        } catch (error) { 
+            console.error('Transcription error:', error); 
+            return `// TRANSCRIPTION ERROR: ${error.message} //`; 
+        }
+    }
+
+    // --- Lógica de Procesado, Resumen, Historial, Modal y Utilidades ---
+    // (Todas estas funciones se mantienen exactamente igual que en la versión anterior)
+    async function processAndSaveTranscription(text) { /* ... */ }
+    function saveToHistory(transcription, summary) { /* ... */ }
+    function loadHistory() { /* ... */ }
+    function deleteFromHistory(id) { /* ... */ }
+    function renderHistory() { /* ... */ }
+    historyBtn.addEventListener('click', () => { /* ... */ });
+    closeModalBtn.addEventListener('click', () => { /* ... */ });
+    window.addEventListener('click', (event) => { /* ... */ });
+    copyBtn.addEventListener('click', () => { /* ... */ });
+    clearBtn.addEventListener('click', () => { /* ... */ });
+});
+
+
+// =======================================================================================
+// PEGANDO AQUÍ ABAJO EL CÓDIGO COMPLETO Y FUNCIONAL PARA EVITAR CUALQUIER DUDA
+// =======================================================================================
+
+document.addEventListener('DOMContentLoaded', () => {
+    // --- Referencias a Elementos del DOM ---
+    const recordBtn = document.getElementById('record-btn');
+    const audioUpload = document.getElementById('audio-upload');
+    const uploadLabel = document.getElementById('upload-label');
+    const statusText = document.getElementById('status-text');
+    const outputText = document.getElementById('output-text');
+    const copyBtn = document.getElementById('copy-btn');
+    const clearBtn = document.getElementById('clear-btn');
+    const historyBtn = document.getElementById('history-btn');
+    const historyModal = document.getElementById('history-modal');
+    const closeModalBtn = document.querySelector('.close-button');
+    const historyList = document.getElementById('history-list');
+
+    // --- Estado de la Aplicación ---
+    let transcriber = null, summarizer = null;
+    let isRecording = false;
+    const SUMMARIZE_THRESHOLD = 1500;
+    const TARGET_SAMPLE_RATE = 16000;
+    
+    let audioContext;
+    let workletNode;
+    let microphoneStream;
+
+    function resampleBuffer(inputBuffer, inputSampleRate) {
+        if (inputSampleRate === TARGET_SAMPLE_RATE) {
+            return inputBuffer;
+        }
+        const ratio = TARGET_SAMPLE_RATE / inputSampleRate;
+        const outputLength = Math.round(inputBuffer.length * ratio);
+        const outputBuffer = new Float32Array(outputLength);
+        
+        for (let i = 0; i < outputLength; i++) {
+            const theoreticalIndex = i / ratio;
+            const index1 = Math.floor(theoreticalIndex);
+            const index2 = Math.ceil(theoreticalIndex);
+            const t = theoreticalIndex - index1;
+
+            if (index2 < inputBuffer.length) {
+                outputBuffer[i] = (1 - t) * inputBuffer[index1] + t * inputBuffer[index2];
+            } else {
+                outputBuffer[i] = inputBuffer[index1];
+            }
+        }
+        return outputBuffer;
+    }
+
+    async function setupAudioWorklet() {
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+        }
+        if (!workletNode) {
+            try {
+                await audioContext.audioWorklet.addModule('audio-recorder-worklet.js');
+                workletNode = new AudioWorkletNode(audioContext, 'audio-recorder-processor');
+                
+                workletNode.port.onmessage = async (event) => {
+                    statusText.textContent = 'Recording complete. Processing full audio...';
+                    let audioData = event.data.buffer;
+                    if (audioData.length === 0) {
+                        statusText.textContent = 'Recording was empty. Nothing to process.';
+                        return;
+                    }
+                    const resampledAudio = resampleBuffer(audioData, audioContext.sampleRate);
+                    const result = await transcribeAudio(resampledAudio);
+                    outputText.value = result;
+                    processAndSaveTranscription(result);
+                };
+            } catch (error) {
+                console.error("Error setting up AudioWorklet:", error);
+                statusText.textContent = "ERROR: Audio Worklet setup failed.";
+            }
+        }
+    }
+
     async function loadModels() {
         statusText.textContent = `SYSTEM BOOT: Loading Transcriber Core...`;
         transcriber = await window.pipeline('automatic-speech-recognition', 'Xenova/whisper-small', {
@@ -82,18 +275,15 @@ document.addEventListener('DOMContentLoaded', () => {
     loadModels();
     loadHistory();
 
-    // --- Lógica de Transcripción ---
     recordBtn.addEventListener('click', () => isRecording ? stopRecording() : startRecording());
     
     async function startRecording() {
         await setupAudioWorklet();
-        
         try {
-            microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000 } });
+            microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const source = audioContext.createMediaStreamSource(microphoneStream);
             source.connect(workletNode);
             workletNode.port.postMessage({ command: 'start' });
-
             isRecording = true;
             recordBtn.classList.add('recording');
             statusText.textContent = 'STATUS: ACTIVE LISTENING...';
@@ -124,7 +314,9 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const arrayBuffer = await file.arrayBuffer();
             const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-            const result = await transcribeAudio(audioBuffer.getChannelData(0));
+            const audioData = audioBuffer.getChannelData(0);
+            const resampledAudio = resampleBuffer(audioData, audioBuffer.sampleRate);
+            const result = await transcribeAudio(resampledAudio);
             outputText.value = result;
             statusText.textContent = `FILE TRANSCRIPTION COMPLETE: "${file.name}"`;
             processAndSaveTranscription(result);
@@ -151,7 +343,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- Lógica de Procesado, Resumen y Guardado ---
     async function processAndSaveTranscription(text) {
         if (!text || text.trim().length < 20) return;
         let summaryText = null;
@@ -172,7 +363,6 @@ document.addEventListener('DOMContentLoaded', () => {
         saveToHistory(text, summaryText);
     }
 
-    // --- Lógica del Historial ---
     function saveToHistory(transcription, summary) {
         const history = JSON.parse(localStorage.getItem('codiceSonicoHistory')) || [];
         const newEntry = {
@@ -230,7 +420,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- Lógica de la Ventana Modal ---
     historyBtn.addEventListener('click', () => historyModal.classList.remove('hidden'));
     closeModalBtn.addEventListener('click', () => historyModal.classList.add('hidden'));
     window.addEventListener('click', (event) => { 
@@ -239,7 +428,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } 
     });
 
-    // --- Botones de Utilidad ---
     copyBtn.addEventListener('click', () => {
         outputText.select();
         document.execCommand('copy');
