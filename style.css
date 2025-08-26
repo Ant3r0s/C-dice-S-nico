@@ -279,3 +279,76 @@ h1 {
 .delete-btn:hover svg {
     fill: var(--neon-magenta); /* Se ilumina al pasar el ratón */
 }
+
+/* --- ESTILOS PARA LA SELECCIÓN DE MODO --- */
+.mode-container {
+    display: flex;
+    gap: 2rem;
+    justify-content: center;
+    margin-top: 2rem;
+}
+
+.mode-button {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem;
+    border: 1px solid var(--border-color);
+    background-color: rgba(0,0,0,0.2);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+    color: var(--text-color);
+}
+
+.mode-button:hover {
+    background-color: rgba(0, 246, 255, 0.1);
+    border-color: var(--neon-cyan);
+    transform: translateY(-5px);
+}
+
+.mode-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+}
+
+.mode-title {
+    font-family: var(--heading-font);
+    font-size: 1.2rem;
+    color: var(--neon-cyan);
+    margin-bottom: 0.5rem;
+}
+
+.mode-desc {
+    font-size: 0.9rem;
+    line-height: 1.5;
+    opacity: 0.8;
+}
+
+.back-button {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--body-font);
+    transition: all 0.2s ease;
+}
+.back-button:hover {
+    background-color: var(--glow-cyan);
+    color: var(--bg-color);
+}
+
+
+/* --- ADAPTACIÓN PARA MÓVILES --- */
+@media (max-width: 768px) {
+    .mode-container {
+        flex-direction: column;
+    }
+}
