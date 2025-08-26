@@ -13,18 +13,44 @@ document.addEventListener('DOMContentLoaded', () => {
     const historyList = document.getElementById('history-list');
 
     // --- Estado de la Aplicación ---
-    let transcriber = null, summarizer = null, mediaRecorder = null;
+    let transcriber = null, summarizer = null;
     let isRecording = false;
     const SUMMARIZE_THRESHOLD = 1500;
+    
+    // --- ARQUITECTURA DE AUDIO PROFESIONAL ---
     let audioContext;
-    let audioChunks = []; // **NUEVO:** Array para guardar los fragmentos de audio
+    let workletNode;
+    let microphoneStream;
 
-    async function ensureAudioContext() {
+    async function setupAudioWorklet() {
         if (!audioContext) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
         }
         if (audioContext.state === 'suspended') {
             await audioContext.resume();
+        }
+        if (!workletNode) {
+            try {
+                await audioContext.audioWorklet.addModule('audio-recorder-worklet.js');
+                workletNode = new AudioWorkletNode(audioContext, 'audio-recorder-processor');
+                
+                // El worklet nos enviará el audio grabado cuando se lo pidamos
+                workletNode.port.onmessage = async (event) => {
+                    statusText.textContent = 'Recording complete. Processing full audio...';
+                    const audioData = event.data.buffer;
+                    if (audioData.length === 0) {
+                        statusText.textContent = 'Recording was empty. Nothing to process.';
+                        return;
+                    }
+                    const result = await transcribeAudio(audioData);
+                    outputText.value = result;
+                    processAndSaveTranscription(result);
+                };
+
+            } catch (error) {
+                console.error("Error setting up AudioWorklet:", error);
+                statusText.textContent = "ERROR: Audio Worklet setup failed.";
+            }
         }
     }
 
@@ -60,38 +86,14 @@ document.addEventListener('DOMContentLoaded', () => {
     recordBtn.addEventListener('click', () => isRecording ? stopRecording() : startRecording());
     
     async function startRecording() {
-        await ensureAudioContext();
+        await setupAudioWorklet();
         
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            audioChunks = []; // Limpiar el array al empezar
-            mediaRecorder = new MediaRecorder(stream);
-            
-            // **CAMBIO DE ESTRATEGIA:** Solo guardamos los fragmentos, no los procesamos aún.
-            mediaRecorder.addEventListener('dataavailable', (event) => {
-                if (event.data.size > 0) {
-                    audioChunks.push(event.data);
-                }
-            });
+            microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000 } });
+            const source = audioContext.createMediaStreamSource(microphoneStream);
+            source.connect(workletNode);
+            workletNode.port.postMessage({ command: 'start' });
 
-            // Al detener, sí procesamos el audio completo.
-            mediaRecorder.addEventListener('stop', async () => {
-                statusText.textContent = 'Recording complete. Processing full audio...';
-                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-
-                try {
-                    const arrayBuffer = await audioBlob.arrayBuffer();
-                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-                    const result = await transcribeAudio(audioBuffer);
-                    outputText.value = result; // Reemplazamos el contenido, no añadimos
-                    processAndSaveTranscription(result);
-                } catch (error) {
-                    console.error('Error processing final audio blob:', error);
-                    statusText.textContent = 'ERROR: Could not process recorded audio.';
-                }
-            });
-
-            mediaRecorder.start(1000); // Guardar fragmentos cada segundo
             isRecording = true;
             recordBtn.classList.add('recording');
             statusText.textContent = 'STATUS: ACTIVE LISTENING...';
@@ -103,9 +105,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function stopRecording() {
-        if (mediaRecorder && mediaRecorder.state === "recording") {
-            mediaRecorder.stop();
-            mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        if (isRecording && workletNode) {
+            workletNode.port.postMessage({ command: 'stop' });
+            microphoneStream.getTracks().forEach(track => track.stop());
         }
         isRecording = false;
         recordBtn.classList.remove('recording');
@@ -114,7 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     audioUpload.addEventListener('change', async (event) => {
-        await ensureAudioContext();
+        await setupAudioWorklet();
         const file = event.target.files[0];
         if (!file || isRecording) return;
         recordBtn.disabled = true;
@@ -122,7 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const arrayBuffer = await file.arrayBuffer();
             const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-            const result = await transcribeAudio(audioBuffer);
+            const result = await transcribeAudio(audioBuffer.getChannelData(0));
             outputText.value = result;
             statusText.textContent = `FILE TRANSCRIPTION COMPLETE: "${file.name}"`;
             processAndSaveTranscription(result);
@@ -135,10 +137,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    async function transcribeAudio(audioBuffer) {
+    async function transcribeAudio(audioData) {
         if (!transcriber) return 'ERROR: AI CORE NOT LOADED.';
         try {
-            const audioData = audioBuffer.getChannelData(0);
             const output = await transcriber(audioData, { 
                 chunk_length_s: 30, 
                 stride_length_s: 5 
@@ -184,13 +185,18 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('codiceSonicoHistory', JSON.stringify(history));
         renderHistory();
     }
-    function loadHistory() { renderHistory(); }
+
+    function loadHistory() {
+        renderHistory();
+    }
+    
     function deleteFromHistory(id) {
         let history = JSON.parse(localStorage.getItem('codiceSonicoHistory')) || [];
         history = history.filter(entry => entry.id !== id);
         localStorage.setItem('codiceSonicoHistory', JSON.stringify(history));
         renderHistory();
     }
+
     function renderHistory() {
         const history = JSON.parse(localStorage.getItem('codiceSonicoHistory')) || [];
         historyList.innerHTML = '';
@@ -224,15 +230,22 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- Lógica de la Ventana Modal y Utilidades ---
+    // --- Lógica de la Ventana Modal ---
     historyBtn.addEventListener('click', () => historyModal.classList.remove('hidden'));
     closeModalBtn.addEventListener('click', () => historyModal.classList.add('hidden'));
-    window.addEventListener('click', (event) => { if (event.target === historyModal) { historyModal.classList.add('hidden'); } });
+    window.addEventListener('click', (event) => { 
+        if (event.target === historyModal) { 
+            historyModal.classList.add('hidden'); 
+        } 
+    });
+
+    // --- Botones de Utilidad ---
     copyBtn.addEventListener('click', () => {
         outputText.select();
         document.execCommand('copy');
         statusText.textContent = 'OUTPUT BUFFER COPIED TO CLIPBOARD.';
     });
+
     clearBtn.addEventListener('click', () => {
         outputText.value = '';
         statusText.textContent = 'OUTPUT BUFFER CLEARED. STATUS: STANDBY.';
